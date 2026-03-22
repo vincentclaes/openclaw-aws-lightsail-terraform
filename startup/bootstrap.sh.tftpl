@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+export DEBIAN_FRONTEND=noninteractive
+
+OPENCLAW_USER="ubuntu"
+OPENCLAW_HOME="/home/$${OPENCLAW_USER}"
+OPENCLAW_STATE_DIR="$${OPENCLAW_HOME}/.openclaw"
+OPENCLAW_ENV_FILE="$${OPENCLAW_STATE_DIR}/.env"
+
+log() {
+  printf '[bootstrap] %s\n' "$1"
+}
+
+retry() {
+  local attempts="$${1}"
+  shift
+
+  local n=1
+  until "$@"; do
+    if [ "$${n}" -ge "$${attempts}" ]; then
+      return 1
+    fi
+
+    sleep $((n * 3))
+    n=$((n + 1))
+  done
+}
+
+install_base_packages() {
+  retry 5 apt-get update -y
+  retry 5 apt-get install -y \
+    ca-certificates \
+    curl \
+    git \
+    jq \
+    unzip \
+    build-essential \
+    openssh-server
+}
+
+install_nodejs() {
+  if command -v node >/dev/null 2>&1; then
+    local current_major
+    current_major="$(node -p 'process.versions.node.split(".")[0]')"
+    if [ "$${current_major}" = "${nodejs_major_version}" ]; then
+      return
+    fi
+  fi
+
+  curl -fsSL "https://deb.nodesource.com/setup_${nodejs_major_version}.x" | bash -
+  retry 5 apt-get install -y nodejs
+  npm install -g npm@latest
+}
+
+install_aws_cli() {
+%{ if install_aws_cli ~}
+  if command -v aws >/dev/null 2>&1; then
+    return
+  fi
+
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "$${tmpdir}/awscliv2.zip"
+  unzip -q "$${tmpdir}/awscliv2.zip" -d "$${tmpdir}"
+  "$${tmpdir}/aws/install" --update
+  rm -rf "$${tmpdir}"
+%{ else ~}
+  return
+%{ endif ~}
+}
+
+configure_ssh() {
+  install -d -m 700 -o "$${OPENCLAW_USER}" -g "$${OPENCLAW_USER}" "$${OPENCLAW_HOME}/.ssh"
+  touch "$${OPENCLAW_HOME}/.ssh/authorized_keys"
+  chown "$${OPENCLAW_USER}:$${OPENCLAW_USER}" "$${OPENCLAW_HOME}/.ssh/authorized_keys"
+  chmod 600 "$${OPENCLAW_HOME}/.ssh/authorized_keys"
+
+%{ if additional_authorized_keys != "" ~}
+  cat <<'EOF_KEYS' >> "$${OPENCLAW_HOME}/.ssh/authorized_keys"
+${additional_authorized_keys}
+EOF_KEYS
+  chown "$${OPENCLAW_USER}:$${OPENCLAW_USER}" "$${OPENCLAW_HOME}/.ssh/authorized_keys"
+%{ endif ~}
+
+  cat >/etc/ssh/sshd_config.d/60-openclaw.conf <<'EOF_SSH'
+PasswordAuthentication no
+PubkeyAuthentication yes
+PermitRootLogin no
+AllowTcpForwarding yes
+GatewayPorts no
+X11Forwarding no
+ClientAliveInterval 120
+ClientAliveCountMax 2
+EOF_SSH
+
+  systemctl enable ssh
+  systemctl restart ssh
+}
+
+configure_openclaw_env() {
+  install -d -m 700 -o "$${OPENCLAW_USER}" -g "$${OPENCLAW_USER}" "$${OPENCLAW_STATE_DIR}"
+  cat >"$${OPENCLAW_ENV_FILE}" <<'EOF_ENV'
+${bootstrap_env_content}
+EOF_ENV
+  chown "$${OPENCLAW_USER}:$${OPENCLAW_USER}" "$${OPENCLAW_ENV_FILE}"
+  chmod 600 "$${OPENCLAW_ENV_FILE}"
+}
+
+install_openclaw() {
+  if ! command -v openclaw >/dev/null 2>&1; then
+    npm install -g "openclaw@${openclaw_version}"
+  fi
+
+  # Non-interactive bootstrap: install a loopback-only gateway with token auth.
+  loginctl enable-linger "$${OPENCLAW_USER}" || true
+
+  sudo -H -u "$${OPENCLAW_USER}" bash <<'EOF_OPENCLAW'
+set -euo pipefail
+cd "$${HOME}"
+set -a
+source "$${HOME}/.openclaw/.env"
+set +a
+
+if [ ! -f "$${HOME}/.openclaw/openclaw.json" ]; then
+  openclaw onboard --non-interactive \
+    --mode local \
+    --flow quickstart \
+    --auth-choice skip \
+    --gateway-auth token \
+    --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN \
+    --gateway-port ${openclaw_port} \
+    --gateway-bind ${openclaw_bind} \
+    --install-daemon \
+    --daemon-runtime node \
+    --skip-skills \
+    --accept-risk
+else
+  openclaw gateway install >/dev/null || true
+  openclaw gateway restart >/dev/null || true
+fi
+EOF_OPENCLAW
+}
+
+install_ssm() {
+%{ if ssm_enabled ~}
+  if ! snap list amazon-ssm-agent >/dev/null 2>&1; then
+    snap install amazon-ssm-agent --classic
+  fi
+
+  systemctl stop snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+  rm -f /var/lib/amazon/ssm/Vault/Store/RegistrationKey
+  /snap/amazon-ssm-agent/current/amazon-ssm-agent -register -y \
+    -id "${ssm_activation_id}" \
+    -code "${ssm_activation_code}" \
+    -region "${region}"
+  systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
+%{ else ~}
+  return
+%{ endif ~}
+}
+
+run_extra_commands() {
+%{ if extra_bootstrap_commands != "" ~}
+  bash <<'EOF_EXTRA'
+${extra_bootstrap_commands}
+EOF_EXTRA
+%{ else ~}
+  return
+%{ endif ~}
+}
+
+main() {
+  log "installing base packages"
+  install_base_packages
+
+  log "configuring SSH"
+  configure_ssh
+
+  log "installing Node.js"
+  install_nodejs
+
+  log "installing AWS CLI"
+  install_aws_cli
+
+  log "writing OpenClaw environment"
+  configure_openclaw_env
+
+  log "installing OpenClaw"
+  install_openclaw
+
+  log "registering SSM agent"
+  install_ssm
+
+  log "running extra bootstrap commands"
+  run_extra_commands
+
+  log "bootstrap complete"
+}
+
+main "$@"
