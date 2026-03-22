@@ -8,6 +8,8 @@ OPENCLAW_HOME="/home/$${OPENCLAW_USER}"
 OPENCLAW_STATE_DIR="$${OPENCLAW_HOME}/.openclaw"
 OPENCLAW_ENV_FILE="$${OPENCLAW_STATE_DIR}/.env"
 
+# Terraform dependency anchor for Bedrock IAM policy creation: ${bedrock_policy_dependency}
+
 log() {
   printf '[bootstrap] %s\n' "$1"
 }
@@ -107,6 +109,22 @@ EOF_ENV
   chmod 600 "$${OPENCLAW_ENV_FILE}"
 }
 
+configure_aws_profile() {
+%{ if bedrock_enabled ~}
+  install -d -m 700 -o "$${OPENCLAW_USER}" -g "$${OPENCLAW_USER}" "$${OPENCLAW_HOME}/.aws"
+  cat >"$${OPENCLAW_HOME}/.aws/config" <<'EOF_AWS'
+[profile ${bedrock_profile_name}]
+role_arn = ${bedrock_role_arn}
+credential_source = Ec2InstanceMetadata
+region = ${region}
+EOF_AWS
+  chown "$${OPENCLAW_USER}:$${OPENCLAW_USER}" "$${OPENCLAW_HOME}/.aws/config"
+  chmod 600 "$${OPENCLAW_HOME}/.aws/config"
+%{ else ~}
+  return
+%{ endif ~}
+}
+
 install_openclaw() {
   if ! command -v openclaw >/dev/null 2>&1; then
     npm install -g "openclaw@${openclaw_version}"
@@ -185,6 +203,9 @@ main() {
 
   log "writing OpenClaw environment"
   configure_openclaw_env
+
+  log "configuring AWS profile"
+  configure_aws_profile
 
   log "installing OpenClaw"
   install_openclaw

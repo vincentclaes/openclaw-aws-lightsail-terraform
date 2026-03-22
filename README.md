@@ -5,6 +5,7 @@ This repository is a reusable Terraform module that provisions an Ubuntu-based A
 - SSH is enabled so your local coding agent can log in and install or change anything on the box.
 - The OpenClaw gateway listens on `127.0.0.1:18789` by default, so the dashboard is reached through an SSH tunnel instead of a public web port.
 - AWS Systems Manager hybrid activation is enabled by default as a second terminal-access path.
+- Amazon Bedrock access is enabled by default by creating a role-backed AWS profile on the instance instead of writing long-lived AWS keys to disk.
 
 ## What the module creates
 
@@ -13,6 +14,7 @@ This repository is a reusable Terraform module that provisions an Ubuntu-based A
 - A Lightsail SSH key pair imported from your local public key, or reuse of an existing key pair.
 - OpenClaw installed globally with `npm`.
 - A non-interactive OpenClaw onboarding flow that installs the gateway daemon with token auth.
+- An IAM role policy that allows Bedrock model invocation, plus optional AWS Marketplace subscription permissions for first-time third-party model enablement.
 - Optional SSM hybrid activation so you can also start a shell with `aws ssm start-session`.
 
 ## Usage
@@ -44,6 +46,7 @@ module "openclaw_lightsail" {
   ssh_allowed_cidrs = ["203.0.113.10/32"]
 
   openclaw_env_vars = {
+    # Optional provider env vars if you are not using Bedrock.
     ANTHROPIC_API_KEY = var.anthropic_api_key
   }
 }
@@ -71,6 +74,9 @@ Most important inputs:
 - `ssh_public_key_content`: Public key content to import into Lightsail when `create_ssh_key_pair = true`.
 - `ssh_allowed_cidrs`: CIDRs allowed to reach port 22.
 - `openclaw_env_vars`: Environment variables written to `~/.openclaw/.env`.
+- `enable_bedrock_access`: Creates the IAM role and AWS profile used for Bedrock access.
+- `bedrock_resource_arns`: Restrict Bedrock calls to specific model or inference profile ARNs if you do not want `*`.
+- `bedrock_allow_marketplace_access`: Keeps AWS Marketplace subscription permissions for first-time Anthropic and other third-party model activation.
 - `extra_bootstrap_commands`: Extra shell commands for first boot.
 - `enable_ssm_hybrid_activation`: Enables Session Manager access for a no-port shell path.
 
@@ -85,8 +91,32 @@ Most useful outputs:
 - `dashboard_tunnel_command`
 - `dashboard_url`
 - `openclaw_gateway_token` (sensitive)
+- `bedrock_role_arn`
 
 See `outputs.tf` for the full list.
+
+## Amazon Bedrock access
+
+By default, the module creates an IAM role and writes `~/.aws/config` on the instance with a dedicated profile that uses `credential_source = Ec2InstanceMetadata`. That keeps Bedrock access keyless from the instance side and avoids storing static AWS credentials in Terraform variables or on disk.
+
+The default policy allows:
+
+- `bedrock:InvokeModel`
+- `bedrock:InvokeModelWithResponseStream`
+- `bedrock:Converse`
+- `bedrock:ConverseStream`
+- `bedrock:GetFoundationModel`
+- `bedrock:ListFoundationModels`
+
+If `bedrock_allow_marketplace_access = true`, the role also gets:
+
+- `aws-marketplace:Subscribe`
+- `aws-marketplace:Unsubscribe`
+- `aws-marketplace:ViewSubscriptions`
+
+This matches the practical requirement for first-time enablement of third-party Bedrock models such as Anthropic.
+
+Security note: the module's trust policy defaults to `arn:aws:sts::<account-id>:assumed-role/AmazonLightsailInstance/*` because the Lightsail instance identity is not known early enough to use a per-instance trust policy in first-boot bootstrap. If you want a tighter trust relationship, override `bedrock_trust_principal_arn_pattern` after you know the exact instance identity you want to allow.
 
 ## How local terminal access works
 

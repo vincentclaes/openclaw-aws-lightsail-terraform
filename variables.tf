@@ -116,6 +116,42 @@ variable "install_aws_cli" {
   default     = true
 }
 
+variable "enable_bedrock_access" {
+  description = "Create an IAM role and configure the instance to invoke Amazon Bedrock without static AWS keys."
+  type        = bool
+  default     = true
+}
+
+variable "bedrock_role_name" {
+  description = "Optional explicit IAM role name for Bedrock access."
+  type        = string
+  default     = null
+}
+
+variable "bedrock_profile_name" {
+  description = "AWS shared config profile written on the instance for Bedrock access."
+  type        = string
+  default     = "openclaw-bedrock"
+}
+
+variable "bedrock_resource_arns" {
+  description = "Bedrock model or inference profile ARNs the instance may invoke."
+  type        = list(string)
+  default     = ["*"]
+}
+
+variable "bedrock_allow_marketplace_access" {
+  description = "Grant the AWS Marketplace permissions needed for first-time enablement of third-party Bedrock models such as Anthropic."
+  type        = bool
+  default     = true
+}
+
+variable "bedrock_trust_principal_arn_pattern" {
+  description = "Pattern used in the Bedrock role trust policy for Lightsail instance principals. Keep the wildcard or tighten it after provisioning if you know the exact Lightsail instance identity ARN."
+  type        = string
+  default     = null
+}
+
 variable "enable_ssm_hybrid_activation" {
   description = "Register the Lightsail instance in AWS Systems Manager using hybrid activation."
   type        = bool

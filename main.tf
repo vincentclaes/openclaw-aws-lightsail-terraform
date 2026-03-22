@@ -1,9 +1,24 @@
+data "aws_caller_identity" "current" {}
+
+data "aws_partition" "current" {}
+
 locals {
-  key_pair_name = var.create_ssh_key_pair ? aws_lightsail_key_pair.this[0].name : var.ssh_key_pair_name
-  gateway_token = coalesce(var.gateway_token, random_password.gateway_token.result)
+  key_pair_name     = var.create_ssh_key_pair ? aws_lightsail_key_pair.this[0].name : var.ssh_key_pair_name
+  gateway_token     = coalesce(var.gateway_token, random_password.gateway_token.result)
+  bedrock_role_name = coalesce(var.bedrock_role_name, "${var.name}-bedrock")
+  bedrock_trust_principal_arn_pattern = coalesce(
+    var.bedrock_trust_principal_arn_pattern,
+    "arn:${data.aws_partition.current.partition}:sts::${data.aws_caller_identity.current.account_id}:assumed-role/AmazonLightsailInstance/*"
+  )
 
   bootstrap_env_lines = concat(
     ["OPENCLAW_GATEWAY_TOKEN=${local.gateway_token}"],
+    var.enable_bedrock_access ? [
+      "AWS_PROFILE=${var.bedrock_profile_name}",
+      "AWS_REGION=${var.region}",
+      "AWS_DEFAULT_REGION=${var.region}",
+      "AWS_SDK_LOAD_CONFIG=1"
+    ] : [],
     [for key, value in nonsensitive(var.openclaw_env_vars) : "${key}=${value}"]
   )
 
@@ -18,6 +33,10 @@ locals {
     ssm_enabled                = var.enable_ssm_hybrid_activation
     ssm_activation_id          = var.enable_ssm_hybrid_activation ? aws_ssm_activation.this[0].id : ""
     ssm_activation_code        = var.enable_ssm_hybrid_activation ? aws_ssm_activation.this[0].activation_code : ""
+    bedrock_enabled            = var.enable_bedrock_access
+    bedrock_profile_name       = var.bedrock_profile_name
+    bedrock_role_arn           = var.enable_bedrock_access ? aws_iam_role.bedrock[0].arn : ""
+    bedrock_policy_dependency  = var.enable_bedrock_access ? aws_iam_role_policy.bedrock[0].id : ""
     region                     = var.region
     extra_bootstrap_commands   = trimspace(var.extra_bootstrap_commands)
   })
@@ -77,6 +96,68 @@ resource "aws_iam_role_policy_attachment" "ssm_core" {
   count      = var.enable_ssm_hybrid_activation ? 1 : 0
   role       = aws_iam_role.ssm[0].name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_role" "bedrock" {
+  count = var.enable_bedrock_access ? 1 : 0
+  name  = local.bedrock_role_name
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          AWS = "arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"
+        }
+        Action = "sts:AssumeRole"
+        Condition = {
+          ArnLike = {
+            "aws:PrincipalArn" = local.bedrock_trust_principal_arn_pattern
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "bedrock" {
+  count = var.enable_bedrock_access ? 1 : 0
+  name  = "${local.bedrock_role_name}-policy"
+  role  = aws_iam_role.bedrock[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = concat(
+      [
+        {
+          Sid    = "BedrockInvoke"
+          Effect = "Allow"
+          Action = [
+            "bedrock:Converse",
+            "bedrock:ConverseStream",
+            "bedrock:GetFoundationModel",
+            "bedrock:InvokeModel",
+            "bedrock:InvokeModelWithResponseStream",
+            "bedrock:ListFoundationModels"
+          ]
+          Resource = var.bedrock_resource_arns
+        }
+      ],
+      var.bedrock_allow_marketplace_access ? [
+        {
+          Sid    = "MarketplaceSubscribe"
+          Effect = "Allow"
+          Action = [
+            "aws-marketplace:Subscribe",
+            "aws-marketplace:Unsubscribe",
+            "aws-marketplace:ViewSubscriptions"
+          ]
+          Resource = "*"
+        }
+      ] : []
+    )
+  })
 }
 
 resource "aws_ssm_activation" "this" {

@@ -44,6 +44,11 @@ output "openclaw_gateway_token" {
   sensitive   = true
 }
 
+output "bedrock_role_arn" {
+  description = "IAM role ARN used by the instance for Amazon Bedrock access."
+  value       = var.enable_bedrock_access ? aws_iam_role.bedrock[0].arn : null
+}
+
 output "ssm_activation_id" {
   description = "SSM activation ID used for hybrid registration."
   value       = var.enable_ssm_hybrid_activation ? aws_ssm_activation.this[0].id : null
