@@ -67,7 +67,7 @@ if ! aws lightsail get-key-pair \
     --profile "$PROFILE" \
     --region "$REGION" \
     --key-pair-name "$KEY_PAIR_NAME" \
-    --public-key-base64 "fileb://$SSH_PUBLIC_KEY" \
+    --public-key-base64 "file://$SSH_PUBLIC_KEY" \
     --output json >/dev/null
   printf 'Imported Lightsail key pair %s.\n' "$KEY_PAIR_NAME"
 fi

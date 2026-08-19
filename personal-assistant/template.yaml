@@ -58,6 +58,7 @@ Resources:
       UserData:
         Fn::Sub: |
           #!/usr/bin/env bash
+          if [ -z "$BASH_VERSION" ]; then exec /usr/bin/env bash "$0" "$@"; fi
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
 
@@ -123,7 +124,7 @@ Resources:
               --skip-skills \
               --accept-risk
           fi
-          openclaw plugins install @openclaw/slack
+          openclaw plugins install @openclaw/slack@2026.7.1
           openclaw gateway restart || true
           EOF_OPENCLAW
 
