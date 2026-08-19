@@ -124,7 +124,7 @@ Resources:
               --skip-skills \
               --accept-risk
           fi
-          openclaw plugins install @openclaw/slack@2026.7.1
+          openclaw plugins install --pin @openclaw/slack@2026.7.1
           openclaw gateway restart || true
           EOF_OPENCLAW
 

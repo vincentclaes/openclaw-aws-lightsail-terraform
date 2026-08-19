@@ -152,7 +152,7 @@ mv "$ENV_TMP" "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 unset SLACK_APP_TOKEN SLACK_BOT_TOKEN
 
-openclaw plugins install @openclaw/slack@2026.7.1
+openclaw plugins install --force --pin @openclaw/slack@2026.7.1
 
 render_patch >"$PATCH_FILE"
 
