@@ -69,6 +69,23 @@ ssh -t -i ~/.ssh/id_ed25519 ubuntu@"$ASSISTANT_IP" \
     --approver-user-ids <vincent-id>,<johan-id>'
 ```
 
+## Update
+
+- Rescope code and skills update through Git.
+- OpenClaw updates through npm, not Git.
+- Repository changes do not update the server automatically; rerun the relevant script or CloudFormation deployment.
+
+```bash
+ssh -i ~/.ssh/id_ed25519 ubuntu@"$ASSISTANT_IP" \
+  'git -C ~/rescope-transformation-platform pull --ff-only && \
+   cd ~/rescope-transformation-platform && npm ci'
+
+ssh -i ~/.ssh/id_ed25519 ubuntu@"$ASSISTANT_IP" \
+  'npm view openclaw version && \
+   sudo npm install -g openclaw@<reviewed-version> && \
+   openclaw gateway restart'
+```
+
 ## Verify
 
 ```bash
